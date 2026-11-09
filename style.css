@@ -100,6 +100,7 @@ select{font:inherit;background:#000;color:var(--fg);border:1px solid var(--line)
 .switch a{color:var(--dim);text-decoration:none;border:1px solid var(--line);padding:6px 14px;font-weight:700;transition:.25s}
 .switch a:hover,.switch a.on{color:#000;background:var(--fg);border-color:var(--fg)}
 @media(max-width:640px){.split{grid-template-columns:1fr}.big{min-height:260px}header{flex-wrap:wrap;gap:10px}}
+.sync{font-size:.7rem;color:var(--dim);align-self:center;letter-spacing:.05em}
 .confetti{position:fixed;width:8px;height:8px;background:#fff;z-index:100;pointer-events:none}
 
 @media print{#bg,.grain,.spot,header,.marquee,.toolbar,.crumb{display:none!important}body,.panel{background:#fff;color:#000}.li,.li a,h1,.rh{color:#000}.dim{color:#555}}

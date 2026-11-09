@@ -1,0 +1,6 @@
+{
+ "apartments": [
+  { "id": "apt115", "name": "115", "budget": "", "rooms": [] },
+  { "id": "apt111", "name": "111", "budget": "", "rooms": [] }
+ ]
+}

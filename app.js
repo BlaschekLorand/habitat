@@ -5,11 +5,15 @@ const ROOMS = ["Nappali", "Konyha", "Hálószoba", "Fürdőszoba", "Előszoba", 
 const HU = { Researching: "Kutatás", Decided: "Eldöntve", Ordered: "Megrendelve", Bought: "Megvéve", Low: "Alacsony", Medium: "Közepes", High: "Magas", All: "Összes", Priority: "Fontosság", Price: "Ár", Name: "Név" };
 const hu = k => HU[k] || k;
 const FIXED = ["115", "111"];
-let db = load();
+const REPO = "BlaschekLorand/habitat", FILE = "data.json", BRANCH = "main";
+const DIRTY = KEY + "-dirty", TOKEN = KEY + "-token";
+let db = normalize(readLocal());
 
-function load() {
-  let d;
-  try { d = JSON.parse(localStorage.getItem(KEY)) || {}; } catch { d = {}; }
+function readLocal() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; }
+}
+function normalize(d) {
+  d = d && typeof d === "object" ? d : {};
   d.apartments = (d.apartments || []).filter(a => FIXED.includes(a.name));
   for (const name of FIXED) if (!d.apartments.some(a => a.name === name)) d.apartments.push({ id: "apt" + name, name, budget: "", rooms: [] });
   d.apartments.sort((a, b) => FIXED.indexOf(a.name) - FIXED.indexOf(b.name));
@@ -18,11 +22,69 @@ function load() {
     a.rooms = a.rooms || [];
     if (a.items) { a.rooms.push({ id: uid(), name: "Általános", items: a.items }); delete a.items; }
     a.budget = a.budget || "";
-    for (const r of a.rooms) for (const i of r.items) { i.qty = i.qty || 1; i.status = i.status || "Researching"; i.priority = i.priority || "Medium"; }
+    for (const r of a.rooms) for (const i of r.items) { i.qty = i.qty || 1; i.status = i.status || "Researching"; i.priority = i.priority || "Medium"; i.options = i.options || []; }
   }
   return d;
 }
-const save = () => localStorage.setItem(KEY, JSON.stringify(db));
+const hasContent = d => d.apartments.some(a => a.rooms.length);
+
+// ---------- JSON storage: data.json in the GitHub repo ----------
+const api = `https://api.github.com/repos/${REPO}/contents/${FILE}`;
+const b64 = s => { const b = new TextEncoder().encode(s); let r = ""; b.forEach(x => r += String.fromCharCode(x)); return btoa(r); };
+let pushTimer, pushing = false;
+
+async function fetchRemote() {
+  try {
+    const r = await fetch(`${api}?ref=${BRANCH}&t=${Date.now()}`, { headers: { Accept: "application/vnd.github.raw+json" }, cache: "no-store" });
+    if (r.ok) return await r.json();
+  } catch { }
+  try {
+    const r = await fetch(`${FILE}?t=${Date.now()}`, { cache: "no-store" });
+    if (r.ok) return await r.json();
+  } catch { }
+  return null;
+}
+function status(msg) { const s = $("#sync"); if (s) s.textContent = msg; }
+function save() {
+  localStorage.setItem(KEY, JSON.stringify(db));
+  localStorage.setItem(DIRTY, "1");
+  clearTimeout(pushTimer);
+  if (localStorage.getItem(TOKEN)) { status("Mentés…"); pushTimer = setTimeout(push, 1200); }
+  else status("⚠ Nincs mentve a GitHubra");
+}
+async function push() {
+  const token = localStorage.getItem(TOKEN);
+  if (!token) return;
+  if (pushing) { pushTimer = setTimeout(push, 800); return; }
+  pushing = true;
+  const h = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
+  try {
+    const snapshot = JSON.stringify(db, null, 1);
+    const cur = await fetch(`${api}?ref=${BRANCH}&t=${Date.now()}`, { headers: h, cache: "no-store" });
+    const sha = cur.ok ? (await cur.json()).sha : undefined;
+    const r = await fetch(api, { method: "PUT", headers: h, body: JSON.stringify({ message: "Habitat: adatok frissítése", content: b64(snapshot), branch: BRANCH, sha }) });
+    if (!r.ok) throw new Error(r.status);
+    if (JSON.stringify(db, null, 1) === snapshot) localStorage.removeItem(DIRTY);
+    status("✓ Mentve a GitHubra");
+  } catch (e) {
+    status("⚠ Mentési hiba (" + e.message + ")");
+  }
+  pushing = false;
+}
+async function init() {
+  if (localStorage.getItem(DIRTY)) {
+    status(localStorage.getItem(TOKEN) ? "Mentés…" : "⚠ Nincs mentve a GitHubra");
+    if (localStorage.getItem(TOKEN)) push();
+  } else {
+    const remote = await fetchRemote();
+    if (remote) {
+      const r = normalize(remote);
+      if (!hasContent(r) && hasContent(db)) { localStorage.setItem(DIRTY, "1"); status("⚠ Nincs mentve a GitHubra"); }
+      else { db = r; localStorage.setItem(KEY, JSON.stringify(db)); status("✓ Betöltve a data.json-ból"); }
+    } else status("Offline: helyi adatok");
+  }
+  render();
+}
 function uid() { return Math.random().toString(36).slice(2, 10); }
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const safeUrl = u => (/^https?:\/\//i.test(u) ? u : "");
@@ -290,7 +352,7 @@ $("#import").onchange = async e => {
   try {
     const d = JSON.parse(await e.target.files[0].text());
     if (!Array.isArray(d.apartments)) throw 0;
-    if (confirm("Lecseréled a jelenlegi adatokat az importált fájllal?")) { localStorage.setItem(KEY, JSON.stringify(d)); db = load(); save(); render(); }
+    if (confirm("Lecseréled a jelenlegi adatokat az importált fájllal?")) { db = normalize(d); save(); render(); }
   } catch { alert("Ez nem érvényes Habitat fájl."); }
   e.target.value = "";
 };
@@ -338,4 +400,10 @@ addEventListener("resize", size); size();
 })();
 
 addEventListener("hashchange", render);
-render();
+$("#token").onclick = () => {
+  const t = prompt("GitHub token (fine-grained, a habitat repóra 'Contents: Read and write' jog). Csak ebben a böngészőben tárolódik. Üresen hagyva törlődik:", localStorage.getItem(TOKEN) || "");
+  if (t === null) return;
+  if (t.trim()) { localStorage.setItem(TOKEN, t.trim()); localStorage.setItem(DIRTY, "1"); status("Mentés…"); push(); }
+  else { localStorage.removeItem(TOKEN); status("Token törölve"); }
+};
+init();
