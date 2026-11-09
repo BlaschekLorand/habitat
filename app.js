@@ -5,83 +5,56 @@ const ROOMS = ["Nappali", "Konyha", "Hálószoba", "Fürdőszoba", "Előszoba", 
 const HU = { Researching: "Kutatás", Decided: "Eldöntve", Ordered: "Megrendelve", Bought: "Megvéve", Low: "Alacsony", Medium: "Közepes", High: "Magas", All: "Összes", Priority: "Fontosság", Price: "Ár", Name: "Név" };
 const hu = k => HU[k] || k;
 const FIXED = ["115", "111"];
-const REPO = "BlaschekLorand/habitat", FILE = "data.json", BRANCH = "main";
-const DIRTY = KEY + "-dirty", TOKEN = KEY + "-token";
-let db = normalize(readLocal());
+const API = "api.php", EDITKEY = KEY + "-editkey";
+let db = normalize({}), loaded = false;
 
-function readLocal() {
-  try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; }
-}
 function normalize(d) {
   d = d && typeof d === "object" ? d : {};
   d.apartments = (d.apartments || []).filter(a => FIXED.includes(a.name));
   for (const name of FIXED) if (!d.apartments.some(a => a.name === name)) d.apartments.push({ id: "apt" + name, name, budget: "", rooms: [] });
   d.apartments.sort((a, b) => FIXED.indexOf(a.name) - FIXED.indexOf(b.name));
-  // migrate v1 (items directly under apartment) into a "General" room
   for (const a of d.apartments) {
     a.rooms = a.rooms || [];
-    if (a.items) { a.rooms.push({ id: uid(), name: "Általános", items: a.items }); delete a.items; }
     a.budget = a.budget || "";
-    for (const r of a.rooms) for (const i of r.items) { i.qty = i.qty || 1; i.status = i.status || "Researching"; i.priority = i.priority || "Medium"; i.options = i.options || []; }
+    for (const r of a.rooms) { r.items = r.items || []; for (const i of r.items) { i.qty = i.qty || 1; i.status = i.status || "Researching"; i.priority = i.priority || "Medium"; i.options = i.options || []; } }
   }
   return d;
 }
-const hasContent = d => d.apartments.some(a => a.rooms.length);
 
-// ---------- JSON storage: data.json in the GitHub repo ----------
-const api = `https://api.github.com/repos/${REPO}/contents/${FILE}`;
-const b64 = s => { const b = new TextEncoder().encode(s); let r = ""; b.forEach(x => r += String.fromCharCode(x)); return btoa(r); };
-let pushTimer, pushing = false;
-
-async function fetchRemote() {
-  try {
-    const r = await fetch(`${api}?ref=${BRANCH}&t=${Date.now()}`, { headers: { Accept: "application/vnd.github.raw+json" }, cache: "no-store" });
-    if (r.ok) return await r.json();
-  } catch { }
-  try {
-    const r = await fetch(`${FILE}?t=${Date.now()}`, { cache: "no-store" });
-    if (r.ok) return await r.json();
-  } catch { }
-  return null;
-}
+// ---------- MySQL storage via api.php ----------
+let pushTimer, pushing = false, again = false;
 function status(msg) { const s = $("#sync"); if (s) s.textContent = msg; }
 function save() {
-  localStorage.setItem(KEY, JSON.stringify(db));
-  localStorage.setItem(DIRTY, "1");
+  if (!loaded) return;
   clearTimeout(pushTimer);
-  if (localStorage.getItem(TOKEN)) { status("Mentés…"); pushTimer = setTimeout(push, 1200); }
-  else status("⚠ Nincs mentve a GitHubra");
+  if (!localStorage.getItem(EDITKEY)) { status("⚠ Nincs mentve – add meg a jelszót (Belépés)"); return; }
+  status("Mentés…");
+  pushTimer = setTimeout(push, 800);
 }
 async function push() {
-  const token = localStorage.getItem(TOKEN);
-  if (!token) return;
-  if (pushing) { pushTimer = setTimeout(push, 800); return; }
+  if (pushing) { again = true; return; }
   pushing = true;
-  const h = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
   try {
-    const snapshot = JSON.stringify(db, null, 1);
-    const cur = await fetch(`${api}?ref=${BRANCH}&t=${Date.now()}`, { headers: h, cache: "no-store" });
-    const sha = cur.ok ? (await cur.json()).sha : undefined;
-    const r = await fetch(api, { method: "PUT", headers: h, body: JSON.stringify({ message: "Habitat: adatok frissítése", content: b64(snapshot), branch: BRANCH, sha }) });
-    if (!r.ok) throw new Error(r.status);
-    if (JSON.stringify(db, null, 1) === snapshot) localStorage.removeItem(DIRTY);
-    status("✓ Mentve a GitHubra");
+    const r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Edit-Key": localStorage.getItem(EDITKEY) || "" }, body: JSON.stringify(db) });
+    if (r.status === 403) { localStorage.removeItem(EDITKEY); status("⚠ Rossz jelszó"); }
+    else if (!r.ok) throw new Error(r.status);
+    else status("✓ Mentve az adatbázisba");
   } catch (e) {
     status("⚠ Mentési hiba (" + e.message + ")");
   }
   pushing = false;
+  if (again) { again = false; push(); }
 }
 async function init() {
-  if (localStorage.getItem(DIRTY)) {
-    status(localStorage.getItem(TOKEN) ? "Mentés…" : "⚠ Nincs mentve a GitHubra");
-    if (localStorage.getItem(TOKEN)) push();
-  } else {
-    const remote = await fetchRemote();
-    if (remote) {
-      const r = normalize(remote);
-      if (!hasContent(r) && hasContent(db)) { localStorage.setItem(DIRTY, "1"); status("⚠ Nincs mentve a GitHubra"); }
-      else { db = r; localStorage.setItem(KEY, JSON.stringify(db)); status("✓ Betöltve a data.json-ból"); }
-    } else status("Offline: helyi adatok");
+  status("Betöltés…");
+  try {
+    const r = await fetch(`${API}?t=${Date.now()}`, { cache: "no-store", headers: { "X-Edit-Key": localStorage.getItem(EDITKEY) || "" } });
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    db = normalize(d); loaded = true;
+    status(d.canEdit ? "✓ Betöltve (szerkesztés engedélyezve)" : "Csak olvasható – Belépés a szerkesztéshez");
+  } catch (e) {
+    status("⚠ Az adatbázis nem érhető el (" + e.message + ")");
   }
   render();
 }
@@ -401,9 +374,9 @@ addEventListener("resize", size); size();
 
 addEventListener("hashchange", render);
 $("#token").onclick = () => {
-  const t = prompt("GitHub token (fine-grained, a habitat repóra 'Contents: Read and write' jog). Csak ebben a böngészőben tárolódik. Üresen hagyva törlődik:", localStorage.getItem(TOKEN) || "");
+  const t = prompt("Szerkesztési jelszó (ugyanaz, mint a config.php-ben az edit_key). Csak ebben a böngészőben tárolódik. Üresen hagyva kilépsz:", localStorage.getItem(EDITKEY) || "");
   if (t === null) return;
-  if (t.trim()) { localStorage.setItem(TOKEN, t.trim()); localStorage.setItem(DIRTY, "1"); status("Mentés…"); push(); }
-  else { localStorage.removeItem(TOKEN); status("Token törölve"); }
+  if (t.trim()) { localStorage.setItem(EDITKEY, t.trim()); init(); }
+  else { localStorage.removeItem(EDITKEY); init(); }
 };
 init();
