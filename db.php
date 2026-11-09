@@ -17,8 +17,3 @@ function pdo(): PDO {
         [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
     );
 }
-
-function key_ok(): bool {
-    $k = $_SERVER['HTTP_X_EDIT_KEY'] ?? ($_GET['key'] ?? '');
-    return is_string($k) && $k !== '' && hash_equals((string)cfg()['edit_key'], $k);
-}

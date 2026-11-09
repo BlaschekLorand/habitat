@@ -5,7 +5,7 @@ const ROOMS = ["Nappali", "Konyha", "Hálószoba", "Fürdőszoba", "Előszoba", 
 const HU = { Researching: "Kutatás", Decided: "Eldöntve", Ordered: "Megrendelve", Bought: "Megvéve", Low: "Alacsony", Medium: "Közepes", High: "Magas", All: "Összes", Priority: "Fontosság", Price: "Ár", Name: "Név" };
 const hu = k => HU[k] || k;
 const FIXED = ["115", "111"];
-const API = "api.php", EDITKEY = KEY + "-editkey";
+const API = "api.php";
 let db = normalize({}), loaded = false;
 
 function normalize(d) {
@@ -27,7 +27,6 @@ function status(msg) { const s = $("#sync"); if (s) s.textContent = msg; }
 function save() {
   if (!loaded) return;
   clearTimeout(pushTimer);
-  if (!localStorage.getItem(EDITKEY)) { status("⚠ Nincs mentve – add meg a jelszót (Belépés)"); return; }
   status("Mentés…");
   pushTimer = setTimeout(push, 800);
 }
@@ -35,10 +34,9 @@ async function push() {
   if (pushing) { again = true; return; }
   pushing = true;
   try {
-    const r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Edit-Key": localStorage.getItem(EDITKEY) || "" }, body: JSON.stringify(db) });
-    if (r.status === 403) { localStorage.removeItem(EDITKEY); status("⚠ Rossz jelszó"); }
-    else if (!r.ok) throw new Error(r.status);
-    else status("✓ Mentve az adatbázisba");
+    const r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(db) });
+    if (!r.ok) throw new Error(r.status);
+    status("✓ Mentve az adatbázisba");
   } catch (e) {
     status("⚠ Mentési hiba (" + e.message + ")");
   }
@@ -48,11 +46,10 @@ async function push() {
 async function init() {
   status("Betöltés…");
   try {
-    const r = await fetch(`${API}?t=${Date.now()}`, { cache: "no-store", headers: { "X-Edit-Key": localStorage.getItem(EDITKEY) || "" } });
+    const r = await fetch(`${API}?t=${Date.now()}`, { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
-    const d = await r.json();
-    db = normalize(d); loaded = true;
-    status(d.canEdit ? "✓ Betöltve (szerkesztés engedélyezve)" : "Csak olvasható – Belépés a szerkesztéshez");
+    db = normalize(await r.json()); loaded = true;
+    status("✓ Betöltve az adatbázisból");
   } catch (e) {
     status("⚠ Az adatbázis nem érhető el (" + e.message + ")");
   }
@@ -373,10 +370,4 @@ addEventListener("resize", size); size();
 })();
 
 addEventListener("hashchange", render);
-$("#token").onclick = () => {
-  const t = prompt("Szerkesztési jelszó (ugyanaz, mint a config.php-ben az edit_key). Csak ebben a böngészőben tárolódik. Üresen hagyva kilépsz:", localStorage.getItem(EDITKEY) || "");
-  if (t === null) return;
-  if (t.trim()) { localStorage.setItem(EDITKEY, t.trim()); init(); }
-  else { localStorage.removeItem(EDITKEY); init(); }
-};
 init();

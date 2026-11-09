@@ -41,12 +41,11 @@ try {
         foreach ($apts as $a) {
             $res[] = ['id' => $a['id'], 'name' => $a['name'], 'budget' => out($a['budget']), 'rooms' => $byApt[$a['id']] ?? []];
         }
-        echo json_encode(['apartments' => $res, 'canEdit' => key_ok()], JSON_UNESCAPED_UNICODE);
+        echo json_encode(['apartments' => $res], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        if (!key_ok()) { http_response_code(403); echo json_encode(['error' => 'bad key']); exit; }
         $d = json_decode(file_get_contents('php://input'), true);
         if (!is_array($d) || !isset($d['apartments']) || !is_array($d['apartments'])) {
             http_response_code(400); echo json_encode(['error' => 'bad json']); exit;
